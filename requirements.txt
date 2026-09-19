@@ -1,0 +1,14 @@
+# Create the venv:
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+numpy==2.4.4
+pandas==3.0.2
+scikit-learn==1.8.0
+matplotlib==3.10.8
+seaborn==0.13.2
+mrmr-selection==0.2.8
+
+# Web interface (app.py)
+streamlit==1.64.0
+plotly==7.1.0
