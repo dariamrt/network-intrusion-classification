@@ -1,0 +1,15 @@
+# Virtual environments (create these outside this folder, see requirements.txt)
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated output
+data_out/
+
+# macOS
+.DS_Store
