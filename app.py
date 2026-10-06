@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from pipeline import run_pipeline
+from robustness import run_robustness
 
 st.set_page_config(
     page_title="Network Intrusion Detection",
@@ -51,6 +52,11 @@ MODEL_BLURBS = {
 @st.cache_resource(show_spinner="Training all 11 models (first run only, cached after that)")
 def get_results():
     return run_pipeline(verbose=False)
+
+
+@st.cache_data(show_spinner="Running the stress tests (first run only, cached after that)")
+def get_robustness():
+    return run_robustness(verbose=False)
 
 
 def read_accuracy(model_name):
@@ -366,6 +372,175 @@ def render_prediction(results):
             st.caption(f"Model confidence: {confidence * 100:.1f}% ({MODEL_LABELS[optimal_model_name]})")
 
 
+def render_stress_test():
+    st.title("Is 99.7% too good to be true?")
+    st.write(
+        "A near-perfect score on an intrusion dataset usually means something is off: "
+        "duplicated rows, information leaking from the test set, or a test that is "
+        "simply too easy. This page checks each of those, then asks the question that "
+        "matters in practice: how does the model handle an attack it has never seen?"
+    )
+
+    r = get_robustness()
+    cv = r["cross_validation"].set_index(["Model", "Metric"])
+    baselines = r["baselines"]
+    curve = r["learning_curve"]
+    unseen = r["unseen_attacks"]
+    unseen_caught = (unseen["Recall when unseen"] * unseen["Connections"]).sum() / unseen["Connections"].sum()
+    rows_for_094 = int(curve.loc[curve["MCC"] >= 0.94, "Training rows"].min())
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Random Forest MCC, 15-fold CV", f"{cv.loc[('Random Forest', 'MCC'), 'Mean']:.3f}",
+              f"± {cv.loc[('Random Forest', 'MCC'), 'Std']:.3f}", delta_color="off")
+    c2.metric("Accuracy with a single split", f"{100 * baselines.loc[1, 'Accuracy']:.1f}%")
+    c3.metric("Training rows for MCC 0.94", f"{rows_for_094:,}")
+    c4.metric("Unseen attack families caught", f"{100 * unseen_caught:.1f}%")
+
+    st.markdown("### 1. Is the score inflated by duplicates or leakage?")
+    st.write(
+        "No. The original KDD'99 data is famous for duplicated records that make test "
+        "sets trivially easy; this NSL-KDD subset was cleaned of them. Not a single row "
+        "of the held-out test split has an identical twin in the training split, and "
+        "every encoder below is fit on the training part only."
+    )
+    st.dataframe(r["duplicates"], hide_index=True, width="stretch")
+    st.write(
+        "The score is also stable: repeated 5-fold cross-validation (3 repeats, 15 fits) "
+        "gives the same number as the single 70/30 split, with a narrow spread."
+    )
+    st.dataframe(
+        r["cross_validation"].style.format({c: "{:.4f}" for c in ["Mean", "Std", "CI low", "CI high"]}),
+        hide_index=True, width="stretch",
+    )
+
+    st.markdown("### 2. Is the task simply easy?")
+    st.write(
+        "Yes, very. A decision tree with one split already gets "
+        f"{100 * baselines.loc[1, 'Accuracy']:.1f}% accuracy, three levels reach MCC "
+        f"{baselines.loc[3, 'MCC']:.2f}, and the full Random Forest only adds the last few points."
+    )
+    fig = go.Figure(go.Bar(
+        x=baselines["MCC"], y=baselines["Model"], orientation="h",
+        marker_color=["#94A3B8"] * (len(baselines) - 1) + ["#2563EB"],
+        text=[f"{v:.3f}" for v in baselines["MCC"]], textposition="outside",
+        hovertemplate="%{y}<br>MCC %{x:.3f}<extra></extra>",
+    ))
+    fig.update_layout(height=300, margin=dict(t=10, b=40, l=10, r=40),
+                      xaxis=dict(title="MCC on the test split", range=[0, 1.1]),
+                      yaxis=dict(autorange="reversed"))
+    st.plotly_chart(fig, width="stretch")
+
+    col_left, col_right = st.columns(2)
+    with col_left:
+        st.markdown("**The whole depth 2 tree** (MCC "
+                    f"{baselines.loc[2, 'MCC']:.2f}, protocol_type 0 is ICMP)")
+        st.code(r["depth2_rules"], language=None)
+        st.caption(
+            "In words: an almost empty payload to a rarely used service is an attack, "
+            "and so is ICMP traffic carrying data. Four rules, "
+            f"{100 * baselines.loc[2, 'Accuracy']:.1f}% accuracy."
+        )
+    with col_right:
+        fig = go.Figure(go.Scatter(
+            x=curve["Training rows"], y=curve["MCC"], mode="lines+markers",
+            line=dict(color="#2563EB", width=2), marker=dict(size=8),
+            hovertemplate="%{x:,} training rows<br>MCC %{y:.3f}<extra></extra>",
+        ))
+        fig.update_layout(height=320, margin=dict(t=30, b=40, l=10, r=10),
+                          title=dict(text="Learning curve, Random Forest", font=dict(size=14)),
+                          xaxis=dict(title="Training rows (log scale)", type="log"),
+                          yaxis=dict(title="MCC on the test split"))
+        st.plotly_chart(fig, width="stretch")
+        st.caption(
+            f"{rows_for_094} labeled connections, 1% of the training data, are already "
+            "enough for MCC above 0.94."
+        )
+
+    single = r["single_predictor"].head(12)
+    fig = go.Figure(go.Bar(
+        x=single["MCC"][::-1], y=single["Predictor"][::-1], orientation="h",
+        marker_color="#2563EB",
+        hovertemplate="%{y}<br>MCC %{x:.3f}<extra></extra>",
+    ))
+    fig.update_layout(height=380, margin=dict(t=30, b=40, l=10, r=10),
+                      title=dict(text="What a small tree (depth 4) reaches using a single predictor",
+                                 font=dict(size=14)),
+                      xaxis=dict(title="MCC on the test split", range=[0, 1]))
+    st.plotly_chart(fig, width="stretch")
+
+    st.markdown("### 3. Does the model depend on a few predictors?")
+    st.write(
+        "No, the signal is spread out and redundant. Removing the most important "
+        "predictors one group at a time barely moves the score until most of them are gone."
+    )
+    ablation = r["ablation"]
+    fig = go.Figure(go.Scatter(
+        x=ablation["Top predictors removed"], y=ablation["MCC"], mode="lines+markers",
+        line=dict(color="#2563EB", width=2), marker=dict(size=8),
+        customdata=ablation["Removed"],
+        hovertemplate="Top %{x} removed<br>MCC %{y:.3f}<extra></extra>",
+    ))
+    fig.update_layout(height=320, margin=dict(t=10, b=40, l=10, r=10),
+                      xaxis=dict(title="Most important predictors removed"),
+                      yaxis=dict(title="MCC on the test split"))
+    st.plotly_chart(fig, width="stretch")
+
+    st.markdown("### 4. What about an attack the model has never seen?")
+    st.write(
+        "This is where the 99.7% falls apart. A random split puts examples of every "
+        "attack type in both training and test, so the test only measures recognition "
+        "of known attacks. The dataset has no attack type labels, so the anomalies were "
+        "clustered into families (KMeans on log-scaled and one-hot encoded predictors). "
+        "Each family was then removed from training entirely and the model was asked to "
+        "detect it, which approximates a new kind of attack showing up in production."
+    )
+    labels = [f"Family {f}<br>{p}" for f, p in
+              zip(unseen["Family"], unseen["Dominant pattern (protocol / service / flag)"])]
+    fig = go.Figure()
+    for column, name, color in [("Recall when seen in training", "Seen in training", "#2563EB"),
+                                ("Recall when unseen", "Never seen", "#F97316")]:
+        fig.add_bar(
+            x=labels, y=100 * unseen[column], name=name, marker_color=color,
+            text=[f"{100 * v:.0f}%" for v in unseen[column]], textposition="outside",
+            hovertemplate=name + "<br>%{x}<br>%{y:.1f}% detected<extra></extra>",
+        )
+    fig.update_layout(barmode="group", bargap=0.3, bargroupgap=0.05, height=440,
+                      margin=dict(t=30, b=40, l=10, r=10),
+                      yaxis=dict(title="Attacks detected (%)", range=[0, 112]),
+                      legend=dict(orientation="h", y=1.08, x=0))
+    st.plotly_chart(fig, width="stretch")
+    st.write(
+        f"Across all held-out families, only {100 * unseen_caught:.1f}% of the attacks "
+        "are flagged, while the false positive rate on normal traffic stays around 0.1%. "
+        "The model has not learned what an attack looks like in general; it has "
+        "memorized the specific attacks in its training data and treats anything else "
+        "as normal."
+    )
+    with st.expander("Full table"):
+        st.dataframe(
+            unseen.style.format({
+                "Pattern share": "{:.0%}",
+                "Recall when seen in training": "{:.1%}",
+                "Recall when unseen": "{:.1%}",
+                "False positive rate on normal traffic": "{:.2%}",
+            }),
+            hide_index=True, width="stretch",
+        )
+        st.caption(
+            "Pattern share is the fraction of the family that matches its dominant "
+            "protocol, service and flag. Families smaller than 50 connections are skipped."
+        )
+
+    st.markdown("### Takeaways")
+    st.write(
+        "- The 99.7% is real for this test design: no duplicates, no leakage, stable across folds.\n"
+        "- The test design is easy. A handful of rules gets most of the way, and very little data is needed.\n"
+        "- Supervised models detect attacks they were trained on, not new ones. A real "
+        "deployment would pair the classifier with anomaly detection trained on normal "
+        "traffic only, and would evaluate on traffic from a different time or network."
+    )
+
+
 def render_conclusions(results):
     st.title("Conclusions")
     st.write(
@@ -390,6 +565,12 @@ def render_conclusions(results):
         "subsamples, not the full dataset, purely for runtime reasons. Worth rerunning "
         "on the full set with more compute at some point."
     )
+    st.write(
+        "The bigger caveat is the test design. A random split only measures how well "
+        "the model recognizes attack types it has already seen. When a whole attack "
+        "family is held out of training, Random Forest detects only about 10% of it "
+        "(see \"Is 99.7% too good to be true?\")."
+    )
     st.markdown("### Reference")
     st.write(
         "Sampada Bhosale, Network Intrusion Detection Dataset. "
@@ -403,7 +584,8 @@ def main():
     st.sidebar.caption("Classification study and interactive demo")
     page = st.sidebar.radio(
         "Section",
-        ["Overview", "Predictor analysis", "Model comparison", "Model details", "Live prediction", "Conclusions"],
+        ["Overview", "Predictor analysis", "Model comparison", "Model details",
+         "Is 99.7% too good to be true?", "Live prediction", "Conclusions"],
         label_visibility="collapsed",
     )
 
@@ -417,6 +599,8 @@ def main():
         render_comparison(results)
     elif page == "Model details":
         render_model_details(results)
+    elif page == "Is 99.7% too good to be true?":
+        render_stress_test()
     elif page == "Live prediction":
         render_prediction(results)
     elif page == "Conclusions":

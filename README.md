@@ -15,6 +15,23 @@ Each network connection is described by 41 attributes (protocol type, service, e
 
 Random Forest is the strongest model, with an MCC of 0.994 and 99.68 percent global accuracy on the held out test set. `src_bytes`, `dst_bytes` and `same_srv_rate` are the most influential predictors.
 
+## Is 99.7% too good to be true?
+
+A near-perfect score on an intrusion dataset is a red flag, so `robustness.py` stress tests it:
+
+| Check | Result |
+|---|---|
+| Duplicates / train-test leakage | None. 0 test rows have an identical twin in training; encoders are fit on training data only. |
+| Repeated 5-fold cross-validation (15 fits) | MCC 0.995 ± 0.001, so the single split was not lucky. |
+| Decision tree with **one** split | 91.9% accuracy. Four `if` rules (depth 2) reach 94.8%. |
+| Learning curve | 176 training rows (1% of the data) already give MCC 0.94. |
+| Remove the 10 most important predictors | MCC still 0.97; the signal is highly redundant. |
+| **Hold out an entire attack family** | **Only 9.8% of unseen attacks are detected**, versus about 99.7% for the same attacks when they are seen in training. |
+
+The dataset has no attack type labels, so attack families are approximated by clustering the anomalies (KMeans on log-scaled, one-hot encoded predictors). Each family is then removed from training and used as the test set.
+
+**Conclusion:** the 99.7% is not caused by leakage. It reflects an easy test design in which every attack type appears in both training and test. The model recognizes known attacks very well but has not learned what an attack looks like in general. A realistic deployment would pair it with anomaly detection trained on normal traffic and evaluate it on traffic from a different time or network.
+
 ## Web interface
 
 `app.py` is a Streamlit application that trains the full pipeline once (cached in memory) and exposes it through 6 sections:
@@ -23,6 +40,7 @@ Random Forest is the strongest model, with an MCC of 0.994 and 99.68 percent glo
 - **Predictor analysis**: ranked predictor scores across all five filtering criteria.
 - **Model comparison**: a sortable table and chart comparing all 11 models by accuracy, CK index and MCC.
 - **Model details**: per-model confusion matrix, ROC curve, gain and lift charts, feature importance and a 2D projection of the test set.
+- **Is 99.7% too good to be true?**: the stress tests above, with charts for the shallow tree baselines, learning curve, predictor ablation and unseen attack families.
 - **Live prediction**: a form for the most influential predictors that runs a live prediction through the optimal model, with every other predictor filled in from its typical training value.
 - **Conclusions**: a summary of findings and limitations.
 
@@ -43,6 +61,14 @@ python main.py
 ```
 
 This regenerates `data_out/tables` and `data_out/plots`.
+
+Run the stress tests (about 15 seconds):
+
+```bash
+python robustness.py
+```
+
+This writes its tables to `data_out/robustness`.
 
 Launch the web interface:
 
