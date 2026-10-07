@@ -11,5 +11,8 @@ __pycache__/
 # Generated output
 data_out/
 
+# Downloaded automatically by cross_dataset.py
+data_in/unsw_nb15/
+
 # macOS
 .DS_Store

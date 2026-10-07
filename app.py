@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from pipeline import run_pipeline
+from cross_dataset import UNSW_COLUMNS, run_cross_dataset
 from robustness import run_robustness
 
 st.set_page_config(
@@ -57,6 +58,11 @@ def get_results():
 @st.cache_data(show_spinner="Running the stress tests (first run only, cached after that)")
 def get_robustness():
     return run_robustness(verbose=False)
+
+
+@st.cache_data(show_spinner="Downloading UNSW-NB15 and running the cross-dataset tests (first run only)")
+def get_cross_dataset():
+    return run_cross_dataset(verbose=False)
 
 
 def read_accuracy(model_name):
@@ -541,6 +547,167 @@ def render_stress_test():
     )
 
 
+def render_cross_dataset():
+    st.title("Does it work on another network?")
+    st.write(
+        "Every other page evaluates the model on the same dataset it was trained on. "
+        "Here it meets UNSW-NB15, a dataset recorded in 2015 on a different network "
+        "with modern attack tools, which is the situation a deployed intrusion detector "
+        "is actually in."
+    )
+
+    r = get_cross_dataset()
+    transfer = r["transfer"].set_index(["Trained on", "Tested on"])
+    adversarial = r["adversarial"]
+    adaptation = r["adaptation"]
+    kdd_to_unsw = transfer.loc[("NSL-KDD", "UNSW-NB15")]
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("MCC on NSL-KDD itself", f"{transfer.loc[('NSL-KDD', 'NSL-KDD'), 'MCC']:.3f}")
+    c2.metric("MCC on UNSW-NB15", f"{kdd_to_unsw['MCC']:.3f}")
+    c3.metric("UNSW-NB15 attacks detected", f"{100 * kdd_to_unsw['Attacks detected']:.2f}%")
+    c4.metric("Networks told apart (AUC)", f"{adversarial.loc[0, 'AUC']:.2f}")
+
+    st.markdown("### The two datasets")
+    st.dataframe(r["datasets"].style.format({"Attack share": "{:.1%}", "Rows used": "{:,}",
+                                             "Rows dropped": "{:,}"}),
+                 hide_index=True, width="stretch")
+    st.write(
+        "The datasets use different feature sets, so the comparison uses the 8 "
+        "attributes that measure the same thing in both. Service names and connection "
+        "states were translated to the NSL-KDD vocabulary, and only tcp, udp and icmp "
+        "connections are kept, since NSL-KDD has no other protocols."
+    )
+    with st.expander("Feature mapping"):
+        st.dataframe(pd.DataFrame({"NSL-KDD": list(UNSW_COLUMNS.values()),
+                                   "UNSW-NB15": list(UNSW_COLUMNS.keys())}),
+                     hide_index=True, width="stretch")
+
+    st.markdown("### 1. Train on one, test on the other")
+    transfer_rows = r["transfer"]
+    labels = [f"{a} → {b}" for a, b in zip(transfer_rows["Trained on"], transfer_rows["Tested on"])]
+    fig = go.Figure(go.Bar(
+        x=transfer_rows["MCC"], y=labels, orientation="h",
+        marker_color=["#2563EB" if same else "#F97316" for same in transfer_rows["Same dataset"]],
+        text=[f"{v:.2f}" for v in transfer_rows["MCC"]], textposition="outside",
+        hovertemplate="%{y}<br>MCC %{x:.3f}<extra></extra>",
+    ))
+    fig.update_layout(height=280, margin=dict(t=10, b=40, l=10, r=40),
+                      xaxis=dict(title="MCC (0 = no better than chance)", range=[-0.4, 1.15],
+                                 zeroline=True, zerolinecolor="#94A3B8"),
+                      yaxis=dict(autorange="reversed"))
+    st.plotly_chart(fig, width="stretch")
+    st.caption("Blue: trained and tested on the same dataset. Orange: tested on the other dataset.")
+    st.write(
+        "On its own data the model is near perfect even with only these 8 features. "
+        f"On UNSW-NB15 it flags {100 * kdd_to_unsw['Attacks detected']:.2f}% of attacks, "
+        "and its MCC is below zero: it does worse than guessing. The reverse direction "
+        "fails as well."
+    )
+
+    st.markdown("### 2. Which attacks get through?")
+    categories = r["categories"]
+    attacks = categories[categories["Category"] != "Normal"]
+    fig = go.Figure()
+    for column, color in [("Trained on UNSW-NB15", "#2563EB"), ("Trained on NSL-KDD", "#F97316")]:
+        fig.add_bar(
+            x=attacks["Category"], y=100 * attacks[column], name=column, marker_color=color,
+            text=[f"{100 * v:.0f}%" for v in attacks[column]], textposition="outside",
+            customdata=attacks["Connections"],
+            hovertemplate=column + "<br>%{x}: %{y:.1f}% detected<br>%{customdata:,} connections<extra></extra>",
+        )
+    fig.update_layout(barmode="group", bargap=0.3, bargroupgap=0.05, height=420,
+                      margin=dict(t=30, b=40, l=10, r=10),
+                      yaxis=dict(title="UNSW-NB15 attacks detected (%)", range=[0, 112]),
+                      legend=dict(orientation="h", y=1.08, x=0))
+    st.plotly_chart(fig, width="stretch")
+    st.write(
+        "Every modern attack category is missed. The NSL-KDD attacks date from 1998 and "
+        "are dominated by floods and scans; exploits, fuzzers and backdoors simply don't "
+        "look like anything in its training data."
+    )
+
+    st.markdown("### 3. Why: the networks look nothing alike")
+    st.write(
+        "Adversarial validation: a classifier is trained to tell which dataset a "
+        "**normal** connection came from. If the networks were similar, it would sit "
+        "near 0.5 AUC. It separates them perfectly, and almost any single numeric feature "
+        "is enough."
+    )
+    per_feature = adversarial.iloc[1:].sort_values("AUC")
+    fig = go.Figure(go.Bar(
+        x=per_feature["AUC"], y=per_feature["Features"], orientation="h", marker_color="#2563EB",
+        text=[f"{v:.2f}" for v in per_feature["AUC"]], textposition="outside",
+        hovertemplate="%{y}<br>AUC %{x:.3f}<extra></extra>",
+    ))
+    fig.add_vline(x=0.5, line_dash="dash", line_color="#94A3B8",
+                  annotation_text="indistinguishable", annotation_position="bottom right")
+    fig.update_layout(height=340, margin=dict(t=10, b=40, l=10, r=40),
+                      xaxis=dict(title="AUC for telling the networks apart, one feature at a time",
+                                 range=[0, 1.1]))
+    st.plotly_chart(fig, width="stretch")
+    st.dataframe(r["distributions"].style.format(precision=2), hide_index=True, width="stretch")
+    st.caption(
+        "Normal traffic in NSL-KDD is tiny, instant connections to busy hosts; in "
+        "UNSW-NB15 it carries kilobytes and the hosts see only a few connections. "
+        "A rule like \"few bytes means attack\" is right on one network and wrong on the other."
+    )
+
+    st.markdown("### 4. Is the feature mapping to blame?")
+    st.write(
+        "The connection counters use different time windows in the two datasets, and "
+        "UNSW-NB15 byte counts include packet headers. So the transfer was repeated "
+        "without the counters, and with every numeric feature replaced by its percentile "
+        "within its own dataset, which removes any difference in scale."
+    )
+    st.dataframe(
+        r["sensitivity"].style.format({"MCC": "{:.3f}", "Accuracy": "{:.1%}",
+                                       "Attacks detected": "{:.1%}", "False positive rate": "{:.1%}"}),
+        hide_index=True, width="stretch",
+    )
+    st.write(
+        "NSL-KDD → UNSW-NB15 fails under every variant, so the mapping is not the "
+        "problem. One interesting asymmetry: after rank normalization, a model trained "
+        "on UNSW-NB15 does transfer to NSL-KDD reasonably well. Training on a broad, "
+        "modern set of attacks generalizes; training on a narrow, old one does not. "
+        "(Rank normalization uses the unlabeled test traffic's own distribution, which "
+        "a real deployment could also do.)"
+    )
+
+    st.markdown("### 5. How much local data fixes it?")
+    fig = go.Figure()
+    for setting, color, dash in [("NSL-KDD + local rows", "#F97316", "solid"),
+                                 ("Local rows only", "#2563EB", "dot")]:
+        part = adaptation[(adaptation["Training data"] == setting) & (adaptation["Labeled UNSW-NB15 rows"] > 0)]
+        fig.add_scatter(
+            x=part["Labeled UNSW-NB15 rows"], y=part["MCC"], name=setting, mode="lines+markers",
+            line=dict(color=color, width=2, dash=dash), marker=dict(size=8),
+            hovertemplate=setting + "<br>%{x:,} labeled rows<br>MCC %{y:.3f}<extra></extra>",
+        )
+    fig.update_layout(height=380, margin=dict(t=30, b=40, l=10, r=10),
+                      xaxis=dict(title="Labeled UNSW-NB15 connections in training (log scale)", type="log"),
+                      yaxis=dict(title="MCC on the UNSW-NB15 testing set"),
+                      legend=dict(orientation="h", y=1.08, x=0))
+    st.plotly_chart(fig, width="stretch")
+    st.write(
+        "A few hundred labeled connections from the new network beat all 25,000 NSL-KDD "
+        "rows, and adding NSL-KDD on top of local data changes MCC by at most about "
+        "0.015 at any size. Once any local data is available, the public dataset adds "
+        "essentially nothing."
+    )
+
+    st.markdown("### Takeaways")
+    st.write(
+        "- A 99.7% score on one dataset says almost nothing about another network.\n"
+        "- The cause is distribution shift: both what normal traffic looks like and which "
+        "attacks exist change between environments.\n"
+        "- Labeled data from the target network matters far more than the amount of "
+        "public training data. Any deployment needs local evaluation and periodic "
+        "retraining, and benchmark scores should come from data the model's environment "
+        "never saw."
+    )
+
+
 def render_conclusions(results):
     st.title("Conclusions")
     st.write(
@@ -569,7 +736,8 @@ def render_conclusions(results):
         "The bigger caveat is the test design. A random split only measures how well "
         "the model recognizes attack types it has already seen. When a whole attack "
         "family is held out of training, Random Forest detects only about 10% of it "
-        "(see \"Is 99.7% too good to be true?\")."
+        "(see \"Is 99.7% too good to be true?\"). On a different network, UNSW-NB15, "
+        "it detects almost none of the attacks (see \"Does it work on another network?\")."
     )
     st.markdown("### Reference")
     st.write(
@@ -585,7 +753,8 @@ def main():
     page = st.sidebar.radio(
         "Section",
         ["Overview", "Predictor analysis", "Model comparison", "Model details",
-         "Is 99.7% too good to be true?", "Live prediction", "Conclusions"],
+         "Is 99.7% too good to be true?", "Does it work on another network?",
+         "Live prediction", "Conclusions"],
         label_visibility="collapsed",
     )
 
@@ -601,6 +770,8 @@ def main():
         render_model_details(results)
     elif page == "Is 99.7% too good to be true?":
         render_stress_test()
+    elif page == "Does it work on another network?":
+        render_cross_dataset()
     elif page == "Live prediction":
         render_prediction(results)
     elif page == "Conclusions":

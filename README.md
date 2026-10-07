@@ -32,6 +32,26 @@ The dataset has no attack type labels, so attack families are approximated by cl
 
 **Conclusion:** the 99.7% is not caused by leakage. It reflects an easy test design in which every attack type appears in both training and test. The model recognizes known attacks very well but has not learned what an attack looks like in general. A realistic deployment would pair it with anomaly detection trained on normal traffic and evaluate it on traffic from a different time or network.
 
+## Does it work on another network?
+
+`cross_dataset.py` evaluates the same kind of model on [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset), a dataset recorded in 2015 on a different network with modern attack tools. The two datasets share 8 comparable attributes (duration, protocol, service, connection state, bytes in each direction and two host-level connection counters), so every model in this experiment uses only those 8.
+
+| Trained on | Tested on | MCC | Attacks detected | False positive rate |
+|---|---|---|---|---|
+| NSL-KDD | NSL-KDD | 0.993 | 99.6% | 0.3% |
+| UNSW-NB15 | UNSW-NB15 | 0.711 | 95.7% | 26.4% |
+| **NSL-KDD** | **UNSW-NB15** | **-0.125** | **0.07%** | 3.2% |
+| UNSW-NB15 | NSL-KDD | -0.239 | 17.7% | 39.5% |
+
+- **Every modern attack category is missed.** The NSL-KDD model detects under 1% of Exploits, Fuzzers, Generic, DoS, Reconnaissance, Backdoor and Worms traffic.
+- **The networks are completely different.** In adversarial validation, a classifier separates the two datasets' *normal* traffic with AUC 1.00, and almost any single numeric feature is enough.
+- **The feature mapping is not to blame.** Dropping the connection counters or rank-normalizing every feature within its own dataset still leaves NSL-KDD → UNSW-NB15 below zero MCC. Interestingly, with rank normalization a model trained on the broader, modern UNSW-NB15 attack set *does* transfer back to NSL-KDD (MCC 0.75).
+- **Local data beats public data.** 50 labeled UNSW-NB15 connections already lift MCC from -0.12 to 0.49. Adding the 25,000 NSL-KDD rows on top of local data changes MCC by at most about 0.015.
+
+**Conclusion:** a benchmark score measures how well a model knows one environment. Deploying an intrusion detector requires labeled data and evaluation from the target network, plus periodic retraining.
+
+UNSW-NB15 is downloaded automatically (about 47 MB, checksum verified) on the first run into `data_in/unsw_nb15`. It is the official training/testing partition, by N. Moustafa and J. Slay.
+
 ## Web interface
 
 `app.py` is a Streamlit application that trains the full pipeline once (cached in memory) and exposes it through 6 sections:
@@ -41,6 +61,7 @@ The dataset has no attack type labels, so attack families are approximated by cl
 - **Model comparison**: a sortable table and chart comparing all 11 models by accuracy, CK index and MCC.
 - **Model details**: per-model confusion matrix, ROC curve, gain and lift charts, feature importance and a 2D projection of the test set.
 - **Is 99.7% too good to be true?**: the stress tests above, with charts for the shallow tree baselines, learning curve, predictor ablation and unseen attack families.
+- **Does it work on another network?**: the NSL-KDD to UNSW-NB15 transfer experiments, attack categories, adversarial validation and the local data curve.
 - **Live prediction**: a form for the most influential predictors that runs a live prediction through the optimal model, with every other predictor filled in from its typical training value.
 - **Conclusions**: a summary of findings and limitations.
 
@@ -69,6 +90,14 @@ python robustness.py
 ```
 
 This writes its tables to `data_out/robustness`.
+
+Run the cross-dataset experiments (downloads UNSW-NB15 on the first run, then about 30 seconds):
+
+```bash
+python cross_dataset.py
+```
+
+This writes its tables to `data_out/cross_dataset`.
 
 Launch the web interface:
 
