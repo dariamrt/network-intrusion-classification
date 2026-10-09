@@ -1,12 +1,11 @@
-from pathlib import Path
-
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from cross_dataset import UNSW_COLUMNS
 from main import load_results
+from src.analysis.cross_dataset import UNSW_COLUMNS
+from src.config import PLOTS, TABLES
 
 st.set_page_config(
     page_title="Network Intrusion Detection",
@@ -15,8 +14,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-TABLES = Path("data_out/tables")
-PLOTS = Path("data_out/plots")
 
 MODEL_LABELS = {
     "GaussianNB": "Gaussian Naive Bayes",

@@ -1,6 +1,5 @@
 import hashlib
 import urllib.request
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -9,8 +8,9 @@ from sklearn.metrics import accuracy_score, matthews_corrcoef, roc_auc_score
 from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
 from sklearn.preprocessing import OrdinalEncoder
 
-OUTPUT = Path("data_out/cross_dataset")
-UNSW_FOLDER = Path("data_in/unsw_nb15")
+from src.config import DATA_OUT, TRAIN_FILE, UNSW_FOLDER
+
+OUTPUT = DATA_OUT / "cross_dataset"
 # the mirror swaps the official names: its train.csv is the official testing set
 UNSW_FILES = {
     "UNSW_NB15_training-set.csv": (
@@ -55,7 +55,7 @@ def download_unsw():
 
 def load_kdd():
     pd.set_option("future.infer_string", False)
-    df = pd.read_csv("data_in/Train_data.csv")
+    df = pd.read_csv(TRAIN_FILE)
     out = df[SHARED].copy()
     out["label"] = (df["class"] == "anomaly").astype(int)
     out["attack_cat"] = np.where(out["label"] == 1, "Attack", "Normal")

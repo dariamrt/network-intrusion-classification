@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
@@ -11,10 +9,11 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 
-import cross_dataset as cd
-import robustness as rb
+from src.analysis import cross_dataset as cd
+from src.analysis import robustness as rb
+from src.config import DATA_OUT
 
-OUTPUT = Path("data_out/anomaly_detection")
+OUTPUT = DATA_OUT / "anomaly_detection"
 TARGET_FPR = 0.01
 DETECTORS = ["Isolation Forest", "Local Outlier Factor", "Autoencoder"]
 COMBINED = "Any detector"

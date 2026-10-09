@@ -7,6 +7,8 @@ from matplotlib import pyplot as plt
 from seaborn import scatterplot, heatmap
 from sklearn.tree import plot_tree
 
+from src.config import PLOTS
+
 
 def show():
     plt.close('all')
@@ -25,7 +27,7 @@ def f_roc(fpr: np.ndarray, tpr: np.ndarray, roc_auc, model_name, thresholds=None
     if thresholds is not None:
         for i in range(len(fpr)):
             ax.text(fpr[i], tpr[i], f"{thresholds[i]:.2f}")
-    plt.savefig("data_out/plots/ROC_" + model_name + ".png", bbox_inches='tight', dpi=150)
+    plt.savefig(PLOTS / f"ROC_{model_name}.png", bbox_inches='tight', dpi=150)
     plt.close()
 
 
@@ -43,7 +45,7 @@ def f_roc_multiclass(fpr, tpr, roc_auc, classes, model_name):
     ax.set_title("ROC curves. " + model_name)
     ax.legend(loc="lower right")
     ax.grid(True)
-    plt.savefig("data_out/plots/ROC_" + model_name + ".png", bbox_inches='tight', dpi=150)
+    plt.savefig(PLOTS / f"ROC_{model_name}.png", bbox_inches='tight', dpi=150)
     plt.close()
 
 
@@ -59,7 +61,7 @@ def f_gain(df: pd.DataFrame, target_value, model_name):
     ax.set_title("Gain chart - " + str(target_value) + ". " + model_name)
     ax.legend()
     ax.grid(True)
-    plt.savefig("data_out/plots/Gain_" + str(target_value) + "_" + model_name + ".png",
+    plt.savefig(PLOTS / f"Gain_{target_value}_{model_name}.png",
                 bbox_inches='tight', dpi=150)
     plt.close()
 
@@ -76,7 +78,7 @@ def f_lift(df: pd.DataFrame, target_value, model_name):
     ax.set_title("Lift chart - " + str(target_value) + ". " + model_name)
     ax.legend()
     ax.grid(True)
-    plt.savefig("data_out/plots/Lift_" + str(target_value) + "_" + model_name + ".png",
+    plt.savefig(PLOTS / f"Lift_{target_value}_{model_name}.png",
                 bbox_inches='tight', dpi=150)
     plt.close()
 
@@ -96,7 +98,7 @@ def plot_conf_m(cm, classes, model_name):
     ax2.set_title("Column normalization (precision)")
     cm_table2 = pd.DataFrame(cm_p, classes, classes)
     heatmap(cm_table2, vmin=0, vmax=1, cmap="Blues", annot=True, ax=ax2)
-    plt.savefig("data_out/plots/CM_" + model_name + ".png", bbox_inches='tight', dpi=150)
+    plt.savefig(PLOTS / f"CM_{model_name}.png", bbox_inches='tight', dpi=150)
     plt.close()
 
 
@@ -107,7 +109,7 @@ def plot_fi_dt(fi, model_name):
     ax.invert_yaxis()
     ax.set_title("Feature importance. " + model_name)
     ax.set_xlabel("Importance")
-    plt.savefig("data_out/plots/FI_DT_" + model_name + ".png", bbox_inches='tight', dpi=150)
+    plt.savefig(PLOTS / f"FI_DT_{model_name}.png", bbox_inches='tight', dpi=150)
     plt.close()
 
 
@@ -120,7 +122,7 @@ def plot_decision_tree(dt, predictors, classes):
               filled=True, rounded=True, fontsize=10, ax=ax, max_depth=3)
     ax.set_title("Decision tree (first 3 levels)", pad=35,
                  fontdict={"color": "b", "fontsize": 16})
-    plt.savefig("data_out/plots/DTree.png", bbox_inches='tight', dpi=150)
+    plt.savefig(PLOTS / "DTree.png", bbox_inches='tight', dpi=150)
     plt.close()
 
 
@@ -138,7 +140,7 @@ def plot_fi_rf(importance_df, model_name):
     ax.set_title("Feature importance - Random Forest")
     ax.legend()
     fig.tight_layout()
-    plt.savefig("data_out/plots/FI_RF_" + model_name + ".png", bbox_inches='tight', dpi=150)
+    plt.savefig(PLOTS / f"FI_RF_{model_name}.png", bbox_inches='tight', dpi=150)
     plt.close()
 
 
@@ -150,5 +152,5 @@ def f_scatter_classification(t: pd.DataFrame, y, model_name, suffix,
     classes = np.unique(y)
     scatterplot(t, x=varx, y=vary, hue=y, style=y,
                 hue_order=classes, style_order=classes, ax=ax, s=100)
-    plt.savefig("data_out/plots/Plot_" + model_name + "_" + suffix + ".png", bbox_inches='tight', dpi=150)
+    plt.savefig(PLOTS / f"Plot_{model_name}_{suffix}.png", bbox_inches='tight', dpi=150)
     plt.close()

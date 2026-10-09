@@ -1,13 +1,10 @@
-from pathlib import Path
-
 import joblib
 
-from anomaly_detection import run_anomaly_detection
-from cross_dataset import run_cross_dataset
-from pipeline import run_pipeline
-from robustness import run_robustness
-
-APP_RESULTS = Path("data_out/app_results.joblib")
+from src.analysis.anomaly_detection import run_anomaly_detection
+from src.analysis.cross_dataset import run_cross_dataset
+from src.analysis.robustness import run_robustness
+from src.config import APP_RESULTS
+from src.pipeline import run_pipeline
 
 
 def build_results(verbose=True):

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
@@ -12,9 +10,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder, StandardScaler
 from sklearn.tree import DecisionTreeClassifier, export_text
 
-from pipeline import CATEGORICAL_PREDICTORS, TARGET
+from src.config import APPLY_FILE, DATA_OUT, TRAIN_FILE
+from src.pipeline import CATEGORICAL_PREDICTORS, TARGET
 
-OUTPUT = Path("data_out/robustness")
+OUTPUT = DATA_OUT / "robustness"
 CATEGORICAL = CATEGORICAL_PREDICTORS.tolist()
 POSITIVE = "anomaly"
 N_FAMILIES = 8
@@ -23,8 +22,8 @@ MIN_FAMILY_SIZE = 50
 
 def load_data():
     pd.set_option("future.infer_string", False)
-    df = pd.read_csv("data_in/Train_data.csv")
-    df_apply = pd.read_csv("data_in/Test_data.csv")
+    df = pd.read_csv(TRAIN_FILE)
+    df_apply = pd.read_csv(APPLY_FILE)
     predictors = [c for c in df.columns if c != TARGET]
     return df, df_apply, predictors
 

@@ -4,8 +4,9 @@ from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
-from classifiers import classify
-from functions import filtering, initialize_output_folders
+from src.classifiers import classify
+from src.config import APPLY_FILE, TABLES, TRAIN_FILE, initialize_output_folders
+from src.predictor_scoring import filtering
 
 TARGET = "class"
 CATEGORICAL_PREDICTORS = np.array(["protocol_type", "service", "flag"])
@@ -34,8 +35,8 @@ def run_pipeline(verbose=True):
     # arrays are restored here.
     pd.set_option("future.infer_string", False)
 
-    df = pd.read_csv("data_in/Train_data.csv")
-    df_apply = pd.read_csv("data_in/Test_data.csv")
+    df = pd.read_csv(TRAIN_FILE)
+    df_apply = pd.read_csv(APPLY_FILE)
 
     target = TARGET
     predictors = np.array([c for c in df.columns if c != target])
@@ -69,7 +70,7 @@ def run_pipeline(verbose=True):
     if verbose:
         print("Predictor order by standardized average score:")
         print(df_predictors)
-    df_predictors.to_csv("data_out/tables/Predictors.csv")
+    df_predictors.to_csv(TABLES / "Predictors.csv")
 
     df_test_encoded = df_test_orig.copy()
     df_test_encoded[categorical_predictors] = encoder.transform(df_test_orig[categorical_predictors])
@@ -109,7 +110,7 @@ def run_pipeline(verbose=True):
         if verbose:
             print("Model", model_name, "executed. MCC =", round(mcc, 4))
 
-    test_predictions.to_csv("data_out/tables/Test_predictions.csv")
+    test_predictions.to_csv(TABLES / "Test_predictions.csv")
     if verbose:
         print("\nOptimal model:", optimal_model_name, "| MCC =", round(optimal_mcc, 4))
 
@@ -131,9 +132,9 @@ def run_pipeline(verbose=True):
         y_predict = optimal_model.predict(x_apply)
 
     df_apply["Predict"] = y_predict
-    df_apply.to_csv("data_out/tables/Apply_predictions.csv")
+    df_apply.to_csv(TABLES / "Apply_predictions.csv")
     if verbose:
-        print("Apply prediction saved in data_out/tables/Apply_predictions.csv")
+        print("Apply prediction saved in", TABLES / "Apply_predictions.csv")
 
     return {
         "df": df,

@@ -17,7 +17,7 @@ Random Forest is the strongest model, with an MCC of 0.994 and 99.68 percent glo
 
 ## Is 99.7% too good to be true?
 
-A near-perfect score on an intrusion dataset is a red flag, so `robustness.py` stress tests it:
+A near-perfect score on an intrusion dataset is a red flag, so `src/analysis/robustness.py` stress tests it:
 
 | Check | Result |
 |---|---|
@@ -34,7 +34,7 @@ The dataset has no attack type labels, so attack families are approximated by cl
 
 ## Does it work on another network?
 
-`cross_dataset.py` evaluates the same kind of model on [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset), a dataset recorded in 2015 on a different network with modern attack tools. The two datasets share 8 comparable attributes (duration, protocol, service, connection state, bytes in each direction and two host-level connection counters), so every model in this experiment uses only those 8.
+`src/analysis/cross_dataset.py` evaluates the same kind of model on [UNSW-NB15](https://research.unsw.edu.au/projects/unsw-nb15-dataset), a dataset recorded in 2015 on a different network with modern attack tools. The two datasets share 8 comparable attributes (duration, protocol, service, connection state, bytes in each direction and two host-level connection counters), so every model in this experiment uses only those 8.
 
 | Trained on | Tested on | MCC | Attacks detected | False positive rate |
 |---|---|---|---|---|
@@ -54,7 +54,7 @@ UNSW-NB15 is downloaded automatically (about 47 MB, checksum verified) on the fi
 
 ## Catching attacks it has never seen
 
-Both experiments above expose the same weakness: a classifier trained on labeled attacks only recognizes those attacks. `anomaly_detection.py` tests the standard remedy. Detectors that learn only what *normal* traffic looks like (Isolation Forest, Local Outlier Factor and an autoencoder) flag anything that deviates, so they need no attack labels. Thresholds are set on held-out normal traffic to flag about 1% of it.
+Both experiments above expose the same weakness: a classifier trained on labeled attacks only recognizes those attacks. `src/analysis/anomaly_detection.py` tests the standard remedy. Detectors that learn only what *normal* traffic looks like (Isolation Forest, Local Outlier Factor and an autoencoder) flag anything that deviates, so they need no attack labels. Thresholds are set on held-out normal traffic to flag about 1% of it.
 
 **NSL-KDD, attack families held out of training:**
 
@@ -84,7 +84,7 @@ Both experiments above expose the same weakness: a classifier trained on labeled
 
 ## Web interface
 
-`app.py` is a Streamlit application that trains the full pipeline once (cached in memory) and exposes it through 6 sections:
+`app.py` is a Streamlit application that loads the precomputed results and presents them in 9 sections:
 
 - **Overview**: problem statement, dataset summary, class balance, methodology.
 - **Predictor analysis**: ranked predictor scores across all five filtering criteria.
@@ -95,6 +95,23 @@ Both experiments above expose the same weakness: a classifier trained on labeled
 - **Catching attacks it has never seen**: anomaly detectors on the held-out attack families and on UNSW-NB15, including the trade-off between detected attacks and false alarms.
 - **Live prediction**: a form for the most influential predictors that runs a live prediction through the optimal model, with every other predictor filled in from its typical training value.
 - **Conclusions**: a summary of findings and limitations.
+
+## Project structure
+
+| Path | Contents |
+|---|---|
+| `app.py` | Streamlit interface |
+| `main.py` | runs every analysis and saves the results the app loads |
+| `src/config.py` | data and output paths |
+| `src/pipeline.py` | the classification study: split, predictor scoring, 11 models, apply set |
+| `src/classifiers.py` | model definitions and evaluation |
+| `src/predictor_scoring.py` | mutual information, Fisher F, Chi squared, mRMR and IV/WOE |
+| `src/metrics.py` | accuracy indicators, ROC, gain and lift |
+| `src/kde_naive_bayes.py` | the kernel density Naive Bayes classifier |
+| `src/plots.py` | matplotlib figures |
+| `src/analysis/` | stress tests, cross-dataset evaluation and anomaly detection |
+| `data_in/` | NSL-KDD training and apply sets (UNSW-NB15 is downloaded here on first run) |
+| `data_out/` | generated tables, plots and the saved results |
 
 ## Running locally
 
@@ -120,14 +137,14 @@ Rerun every analysis and refresh those results (downloads UNSW-NB15 on the first
 python main.py
 ```
 
-Each analysis can also be run on its own:
+Each analysis can also be run on its own from the project folder:
 
-| Script | What it does | Output |
+| Command | What it does | Output |
 |---|---|---|
-| `pipeline.py` | predictor scoring and the 11 classifiers | `data_out/tables`, `data_out/plots` |
-| `robustness.py` | stress tests of the headline result | `data_out/robustness` |
-| `cross_dataset.py` | NSL-KDD versus UNSW-NB15 | `data_out/cross_dataset` |
-| `anomaly_detection.py` | detectors trained only on normal traffic | `data_out/anomaly_detection` |
+| `python -m src.pipeline` | predictor scoring and the 11 classifiers | `data_out/tables`, `data_out/plots` |
+| `python -m src.analysis.robustness` | stress tests of the headline result | `data_out/robustness` |
+| `python -m src.analysis.cross_dataset` | NSL-KDD versus UNSW-NB15 | `data_out/cross_dataset` |
+| `python -m src.analysis.anomaly_detection` | detectors trained only on normal traffic | `data_out/anomaly_detection` |
 
 ## Tech stack
 

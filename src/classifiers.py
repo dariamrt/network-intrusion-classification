@@ -12,8 +12,10 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC, LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 
-from functions import calculate_metrics, calculate_roc, calculate_gain_lift, KDENaiveBayes
-from plots import (f_roc_multiclass, f_lift, f_gain, show,
+from src.config import TABLES
+from src.kde_naive_bayes import KDENaiveBayes
+from src.metrics import calculate_metrics, calculate_roc, calculate_gain_lift
+from src.plots import (f_roc_multiclass, f_lift, f_gain, show,
                    plot_fi_dt, plot_decision_tree, plot_conf_m,
                    f_roc, f_scatter_classification, plot_fi_rf)
 
@@ -30,11 +32,11 @@ def _stratified_sample(x, y, n, random_state=0):
 
 def evaluate_model(y_test, y, proba, q, classes, model_name):
     report = pd.DataFrame(classification_report(y_test, y, output_dict=True)).transpose()
-    report.to_csv("data_out/tables/report_" + model_name + ".csv")
+    report.to_csv(TABLES / f"report_{model_name}.csv")
 
     cm_table, accuracy = calculate_metrics(y_test, y, classes)
-    cm_table.to_csv("data_out/tables/cm_" + model_name + ".csv")
-    accuracy.to_csv("data_out/tables/accuracy_" + model_name + ".csv")
+    cm_table.to_csv(TABLES / f"cm_{model_name}.csv")
+    accuracy.to_csv(TABLES / f"accuracy_{model_name}.csv")
     plot_conf_m(cm_table.values[:, :-1], classes, model_name)
     show()
 
@@ -45,7 +47,7 @@ def evaluate_model(y_test, y, proba, q, classes, model_name):
         f_roc_multiclass(fpr, tpr, roc_auc, classes, model_name)
         for i in range(q):
             decile_df = calculate_gain_lift(y_test, proba[:, i], classes[i])
-            decile_df.to_csv("data_out/tables/gain_lift_" + str(classes[i]) + "_" + model_name + ".csv")
+            decile_df.to_csv(TABLES / f"gain_lift_{classes[i]}_{model_name}.csv")
             f_lift(decile_df, classes[i], model_name)
             f_gain(decile_df, classes[i], model_name)
         show()
@@ -55,7 +57,7 @@ def evaluate_model(y_test, y, proba, q, classes, model_name):
         auc_value = roc_auc_score(y_test, proba[:, 1])
         f_roc(fpr, tpr, auc_value, model_name, thresholds if len(thresholds) < 10 else None)
         decile_df = calculate_gain_lift(y_test, proba[:, 1], classes[1])
-        decile_df.to_csv("data_out/tables/gain_lift_" + str(classes[1]) + "_" + model_name + ".csv")
+        decile_df.to_csv(TABLES / f"gain_lift_{classes[1]}_{model_name}.csv")
         f_lift(decile_df, classes[1], model_name)
         f_gain(decile_df, classes[1], model_name)
         show()
@@ -157,7 +159,7 @@ def classify(x_train, x_test, y_train, y_test,
             "Actual": y_te[error_mask],
             "Prediction": y[error_mask]
         }, index=global_idx[error_mask])
-    errors.to_csv("data_out/tables/errors_" + model_name + ".csv")
+    errors.to_csv(TABLES / f"errors_{model_name}.csv")
 
     match model_name:
         case "DT":
@@ -166,7 +168,7 @@ def classify(x_train, x_test, y_train, y_test,
                 "Importance": model.feature_importances_
             })
             plot_fi_dt(fi, model_name)
-            fi.to_csv("data_out/tables/FI_DT.csv", index=False)
+            fi.to_csv(TABLES / "FI_DT.csv", index=False)
             plot_decision_tree(model, predictors, classes)
             show()
         case "RF":
@@ -180,7 +182,7 @@ def classify(x_train, x_test, y_train, y_test,
             )
             fi_table["Permutation"] = perm_importance.importances_mean
             plot_fi_rf(fi_table, model_name)
-            fi_table.to_csv("data_out/tables/FI_RF.csv", index=False)
+            fi_table.to_csv(TABLES / "FI_RF.csv", index=False)
             show()
 
     # 2D scatter for correctly/incorrectly classified instances
