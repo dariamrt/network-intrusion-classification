@@ -5,10 +5,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from pipeline import run_pipeline
-from anomaly_detection import run_anomaly_detection
-from cross_dataset import UNSW_COLUMNS, run_cross_dataset
-from robustness import run_robustness
+from cross_dataset import UNSW_COLUMNS
+from main import load_results
 
 st.set_page_config(
     page_title="Network Intrusion Detection",
@@ -51,24 +49,25 @@ MODEL_BLURBS = {
 }
 
 
-@st.cache_resource(show_spinner="Training all 11 models (first run only, cached after that)")
+@st.cache_resource(show_spinner="Loading results")
+def get_all_results():
+    return load_results()
+
+
 def get_results():
-    return run_pipeline(verbose=False)
+    return get_all_results()["pipeline"]
 
 
-@st.cache_data(show_spinner="Running the stress tests (first run only, cached after that)")
 def get_robustness():
-    return run_robustness(verbose=False)
+    return get_all_results()["robustness"]
 
 
-@st.cache_data(show_spinner="Downloading UNSW-NB15 and running the cross-dataset tests (first run only)")
 def get_cross_dataset():
-    return run_cross_dataset(verbose=False)
+    return get_all_results()["cross_dataset"]
 
 
-@st.cache_data(show_spinner="Training the anomaly detectors (first run only, cached after that)")
 def get_anomaly_detection():
-    return run_anomaly_detection(verbose=False)
+    return get_all_results()["anomaly_detection"]
 
 
 def read_accuracy(model_name):
