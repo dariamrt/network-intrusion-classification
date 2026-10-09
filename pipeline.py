@@ -42,43 +42,45 @@ def run_pipeline(verbose=True):
     categorical_predictors = CATEGORICAL_PREDICTORS
     numeric_predictors = np.array([v for v in predictors if v not in categorical_predictors])
 
-    # raw category options and typical values, captured before filtering()
-    # encodes the categorical columns in place
-    categorical_options = {c: sorted(df[c].unique().tolist()) for c in categorical_predictors}
-    categorical_defaults = {c: df[c].mode().iloc[0] for c in categorical_predictors}
-    numeric_defaults = df[numeric_predictors].median().to_dict()
+    y = df[target].values
+    index_train, index_test = train_test_split(
+        df.index, test_size=0.3, random_state=0, stratify=y
+    )
+    df_train = df.loc[index_train].copy()
+    df_test_orig = df.loc[index_test].copy()
+    y_train = df_train[target].values
+    y_test = df_test_orig[target].values
+
+    categorical_options = {c: sorted(df_train[c].unique().tolist()) for c in categorical_predictors}
+    categorical_defaults = {c: df_train[c].mode().iloc[0] for c in categorical_predictors}
+    numeric_defaults = df_train[numeric_predictors].median().to_dict()
     numeric_ranges = {
-        c: (float(df[c].min()), float(df[c].max())) for c in numeric_predictors
+        c: (float(df_train[c].min()), float(df_train[c].max())) for c in numeric_predictors
     }
 
     initialize_output_folders()
 
     if verbose:
         print("Filtering predictors")
-    df_predictors, x, encoder = filtering(
-        df, predictors, categorical_predictors, numeric_predictors, target
+    # predictor scores, encoder and scaler only see the training split
+    df_predictors, x_train, encoder = filtering(
+        df_train, predictors, categorical_predictors, numeric_predictors, target
     )
     if verbose:
         print("Predictor order by standardized average score:")
         print(df_predictors)
     df_predictors.to_csv("data_out/tables/Predictors.csv")
 
+    df_test_encoded = df_test_orig.copy()
+    df_test_encoded[categorical_predictors] = encoder.transform(df_test_orig[categorical_predictors])
+    x_test = df_test_encoded[predictors].values
+
     # 2D reduction via PCA (large set of >5000 instances)
     model2d = PCA(n_components=2)
 
     # standardization for kNN, SVMLin, SVM_Gaussian
     scaling = StandardScaler()
-    scaling.fit(x)
-
-    # train/test split from the training set
-    index = df.index
-    y = df[target].values
-    x_train, x_test, y_train, y_test, index_train, index_test = train_test_split(
-        x, y, index, test_size=0.3, random_state=0, stratify=y
-    )
-
-    # original dataframes for the split (for the full error table)
-    df_test_orig = df.loc[index_test].copy()
+    scaling.fit(x_train)
 
     # select optimal model based on MCC
     optimal_model = None
@@ -96,7 +98,7 @@ def run_pipeline(verbose=True):
             x_train, x_test, y_train, y_test,
             test_predictions, model_name,
             predictors, model2d, scaling,
-            df_train=df.loc[index_train],
+            df_train=df_train,
             df_test=df_test_orig
         )
         model_mcc[model_name] = mcc
