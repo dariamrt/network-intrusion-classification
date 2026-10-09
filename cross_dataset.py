@@ -1,37 +1,3 @@
-"""Does a model trained on NSL-KDD work on another network?
-
-Every result in the main study comes from a random split of a single dataset.
-Here the same kind of model is evaluated on UNSW-NB15, a dataset recorded
-about 15 years later on a different network with different attack tools.
-
-The two datasets describe connections with different feature sets, so only the
-attributes that measure the same thing in both are used:
-
-    NSL-KDD             UNSW-NB15         meaning
-    duration            dur               connection length in seconds
-    protocol_type       proto             tcp / udp / icmp
-    service             service           application protocol (names mapped)
-    flag                state             connection status (mapped, see FLAG_MAP)
-    src_bytes           sbytes            bytes sent by the source
-    dst_bytes           dbytes            bytes sent by the destination
-    dst_host_count      ct_dst_ltm        connections to the same destination host
-    dst_host_srv_count  ct_srv_dst        connections to the same host and service
-
-Only tcp, udp and icmp connections are kept, since NSL-KDD has no other protocols.
-
-Experiments:
-1. Train on one dataset, test on the other, compared with training and testing
-   within each dataset on the same shared features.
-2. The same transfer without the connection counters and with rank-normalized
-   features, to check the result is not an artifact of the feature mapping.
-3. Detection rate per UNSW-NB15 attack category.
-4. Adversarial validation: how easily a classifier tells the two datasets'
-   normal traffic apart, which measures the distribution shift directly.
-5. Adaptation: how many labeled UNSW-NB15 connections are needed before the
-   model works on the new network.
-
-Results are written to data_out/cross_dataset.
-"""
 import hashlib
 import urllib.request
 from pathlib import Path
@@ -45,8 +11,7 @@ from sklearn.preprocessing import OrdinalEncoder
 
 OUTPUT = Path("data_out/cross_dataset")
 UNSW_FOLDER = Path("data_in/unsw_nb15")
-# Official UNSW-NB15 partition, mirrored on Hugging Face. The mirror names the
-# files the other way round: its train.csv is the official testing set.
+# the mirror swaps the official names: its train.csv is the official testing set
 UNSW_FILES = {
     "UNSW_NB15_training-set.csv": (
         "https://huggingface.co/datasets/Mireu-Lab/UNSW-NB15/resolve/main/test.csv",
@@ -65,8 +30,6 @@ UNSW_COLUMNS = {"dur": "duration", "proto": "protocol_type", "service": "service
                 "state": "flag", "sbytes": "src_bytes", "dbytes": "dst_bytes",
                 "ct_dst_ltm": "dst_host_count", "ct_srv_dst": "dst_host_srv_count"}
 PROTOCOLS = ["tcp", "udp", "icmp"]
-# UNSW-NB15 uses Argus connection states, NSL-KDD uses Bro/Zeek flags. NSL-KDD
-# labels every udp and icmp connection SF, so the mapping only matters for tcp.
 FLAG_MAP = {"FIN": "SF", "CON": "SF", "REQ": "S0", "RST": "RSTO"}
 SERVICE_MAP = {"-": "other", "dns": "domain_u", "ftp-data": "ftp_data", "pop3": "pop_3",
                "irc": "IRC", "ssl": "http_443", "snmp": "other", "dhcp": "other",
@@ -100,18 +63,12 @@ def load_kdd():
 
 
 def load_unsw(name):
-    """Load one UNSW-NB15 file and translate it to the shared NSL-KDD features.
-
-    Returns the translated frame and the number of rows dropped for using a
-    protocol NSL-KDD does not have.
-    """
     pd.set_option("future.infer_string", False)
     download_unsw()
     df = pd.read_csv(UNSW_FOLDER / name, encoding="utf-8-sig")
     kept = df[df["proto"].isin(PROTOCOLS)]
     out = kept[list(UNSW_COLUMNS)].rename(columns=UNSW_COLUMNS)
     out["service"] = out["service"].replace(SERVICE_MAP)
-    # NSL-KDD splits DNS by transport protocol
     out.loc[(out["service"] == "domain_u") & (out["protocol_type"] == "tcp"), "service"] = "domain"
     out["flag"] = np.where(out["protocol_type"] == "tcp",
                            out["flag"].map(FLAG_MAP).fillna("OTH"), "SF")
@@ -141,7 +98,6 @@ def train_predict(train, test, features=None):
 
 
 def rank_normalize(df):
-    """Replace each numeric feature by its percentile within its own dataset."""
     df = df.copy()
     for f in SHARED:
         if f not in CATEGORICAL:
@@ -175,13 +131,6 @@ def transfer_matrix(kdd_train, kdd_test, unsw_train, unsw_test):
 
 
 def mapping_sensitivity(kdd_train, kdd_test, unsw_train, unsw_test):
-    """Check that the transfer failure is not an artifact of the feature mapping.
-
-    The connection counters use different windows in the two datasets and
-    UNSW-NB15 byte counts include headers, so the transfer is repeated without
-    the counters, and with every numeric feature replaced by its percentile
-    within its own dataset (which removes any difference in scale).
-    """
     per_connection = [f for f in SHARED if f not in ("dst_host_count", "dst_host_srv_count")]
     variants = [
         ("All shared features", SHARED, False),
@@ -208,17 +157,11 @@ def per_category(kdd_train, unsw_train, unsw_test):
     grouped = table.groupby("Category")
     out = grouped.mean()
     out.insert(0, "Connections", grouped.size())
-    # for normal traffic the share flagged is the false positive rate
     out = out.reset_index().sort_values("Connections", ascending=False).reset_index(drop=True)
     return out
 
 
 def adversarial_validation(kdd, unsw):
-    """Train a classifier to tell which dataset a normal connection came from.
-
-    An AUC near 0.5 would mean the two networks look alike; near 1.0 means the
-    model is being asked to work on traffic unlike anything it has seen.
-    """
     n = min((kdd["label"] == 0).sum(), (unsw["label"] == 0).sum(), 10000)
     a = kdd[kdd["label"] == 0].sample(n, random_state=SEED)
     b = unsw[unsw["label"] == 0].sample(n, random_state=SEED)
@@ -250,7 +193,6 @@ def distribution_summary(kdd, unsw):
 
 
 def adaptation_curve(kdd_train, unsw_train, unsw_test):
-    """Add a growing number of labeled UNSW-NB15 rows, with and without NSL-KDD."""
     rows = []
     for n in [0, 50, 200, 1000, 5000, 20000, len(unsw_train)]:
         local = (unsw_train.sample(n, random_state=SEED) if n < len(unsw_train) else unsw_train)
@@ -271,7 +213,6 @@ def run_cross_dataset(verbose=True):
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
     kdd = load_kdd()
-    # same 70/30 split as the main pipeline
     kdd_train, kdd_test = train_test_split(kdd, test_size=0.3, random_state=0, stratify=kdd["label"])
     unsw_train, dropped_train = load_unsw("UNSW_NB15_training-set.csv")
     unsw_test, dropped_test = load_unsw("UNSW_NB15_testing-set.csv")

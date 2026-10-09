@@ -387,7 +387,7 @@ def render_stress_test():
     st.title("Is 99.7% too good to be true?")
     st.write(
         "A near-perfect score on an intrusion dataset usually means something is off: "
-        "duplicated rows, information leaking from the test set, or a test that is "
+        "duplicated rows, information leaking from the test set or a test that is "
         "simply too easy. This page checks each of those, then asks the question that "
         "matters in practice: how does the model handle an attack it has never seen?"
     )
@@ -590,7 +590,7 @@ def render_cross_dataset():
 
     st.markdown("### 1. Train on one, test on the other")
     transfer_rows = r["transfer"]
-    labels = [f"{a} → {b}" for a, b in zip(transfer_rows["Trained on"], transfer_rows["Tested on"])]
+    labels = [f"{a} to {b}" for a, b in zip(transfer_rows["Trained on"], transfer_rows["Tested on"])]
     fig = go.Figure(go.Bar(
         x=transfer_rows["MCC"], y=labels, orientation="h",
         marker_color=["#2563EB" if same else "#F97316" for same in transfer_rows["Same dataset"]],
@@ -671,7 +671,7 @@ def render_cross_dataset():
         hide_index=True, width="stretch",
     )
     st.write(
-        "NSL-KDD → UNSW-NB15 fails under every variant, so the mapping is not the "
+        "Training on NSL-KDD and testing on UNSW-NB15 fails under every variant, so the mapping is not the "
         "problem. One interesting asymmetry: after rank normalization, a model trained "
         "on UNSW-NB15 does transfer to NSL-KDD reasonably well. Training on a broad, "
         "modern set of attacks generalizes; training on a narrow, old one does not. "
@@ -897,46 +897,99 @@ def render_anomaly_detection():
 
 def render_conclusions(results):
     st.title("Conclusions")
+
+    mcc = results["model_mcc"]
+    best = results["optimal_model_name"]
+    best_accuracy = float(read_accuracy(best).loc["Global accuracy"].iloc[0])
+    linear = [mcc[m] for m in ("LDA", "SVMLin", "RegL")]
+    robustness = get_robustness()
+    baselines = robustness["baselines"]
+    unseen = robustness["unseen_attacks"]
+    unseen_caught = (unseen["Recall when unseen"] * unseen["Connections"]).sum() / unseen["Connections"].sum()
+    transfer = get_cross_dataset()["transfer"].set_index(["Trained on", "Tested on"])
+    kdd_to_unsw = transfer.loc[("NSL-KDD", "UNSW-NB15")]
+    anomaly = get_anomaly_detection()
+    nsl = anomaly["nsl_summary"].set_index("Method")
+    hybrid = nsl.loc["Random Forest + any detector"]
+    autoencoder = anomaly["unsw_summary"].set_index("Method").loc["Autoencoder (local normal traffic)"]
+
     st.write(
-        "Random Forest comes out on top: 99.68% global accuracy, MCC 0.994 on the "
-        "held-out test set. Makes sense given it can pick up non-linear interactions "
-        "between predictors that the linear and Bayesian models can't."
+        f"On a random train/test split {MODEL_LABELS[best]} classifies {best_accuracy:.2f}% of "
+        "connections correctly. The rest of the project asks whether that number means "
+        "anything outside the dataset it came from. Mostly it does not, and the last part "
+        "shows what helps."
     )
-    st.write(
-        "src_bytes, dst_bytes and same_srv_rate are the top features by importance - "
-        "data volume and connection consistency turn out to be the strongest signals "
-        "for telling anomalies apart from normal traffic."
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Random split", f"MCC {results['optimal_mcc']:.3f}")
+    c2.metric("Unseen attack families caught", f"{100 * unseen_caught:.1f}%")
+    c3.metric("Attacks caught on a new network", f"{100 * kdd_to_unsw['Attacks detected']:.2f}%")
+    c4.metric("Unseen families with anomaly detection", f"{100 * hybrid['Attacks detected']:.1f}%")
+
+    st.markdown("### What the study found")
+    st.markdown(
+        f"**1. Model comparison.** Tree ensembles win: {MODEL_LABELS[best]} reaches MCC "
+        f"{results['optimal_mcc']:.3f}. The linear models stay between {min(linear):.2f} and "
+        f"{max(linear):.2f}, so the boundary between normal traffic and attacks is not linear "
+        f"in these features. Gaussian Naive Bayes is last (MCC {mcc['GaussianNB']:.2f}) because "
+        "its normality and independence assumptions do not hold here."
     )
-    st.write(
-        "LDA, linear SVM and logistic regression land at MCC 0.80-0.91: decent, but "
-        "behind the tree models, which suggests the real decision boundary isn't linear "
-        "in the original feature space. Gaussian Naive Bayes does worst since its "
-        "independence/normality assumptions don't hold for this data; KDE fixes that by "
-        "dropping the normality assumption and improves on it by a wide margin."
+    st.markdown(
+        "**2. The score is real but the test is easy.** There are no duplicates or leaks "
+        "between training and test data and the result is stable across folds. But one "
+        f"split on one feature already gives {100 * baselines.loc[1, 'Accuracy']:.1f}% accuracy "
+        "and a few hundred rows are enough to train a strong model. When a whole attack "
+        "family is left out of training, the Random Forest catches only "
+        f"{100 * unseen_caught:.1f}% of it."
     )
-    st.write(
-        "One caveat: KDE and Gaussian SVM were trained and evaluated on stratified "
-        "subsamples, not the full dataset, purely for runtime reasons. Worth rerunning "
-        "on the full set with more compute at some point."
+    st.markdown(
+        "**3. It does not transfer to another network.** Trained on NSL-KDD and tested on "
+        f"UNSW-NB15 it detects {100 * kdd_to_unsw['Attacks detected']:.2f}% of attacks "
+        f"(MCC {kdd_to_unsw['MCC']:.2f}). Normal traffic itself looks completely different on "
+        "the two networks, and a few hundred labeled local connections are worth more than "
+        "the whole public dataset."
     )
-    st.write(
-        "The bigger caveat is the test design. A random split only measures how well "
-        "the model recognizes attack types it has already seen. When a whole attack "
-        "family is held out of training, Random Forest detects only about 10% of it "
-        "(see \"Is 99.7% too good to be true?\"). On a different network, UNSW-NB15, "
-        "it detects almost none of the attacks (see \"Does it work on another network?\")."
+    st.markdown(
+        "**4. Anomaly detection closes much of the gap.** Detectors trained only on normal "
+        "traffic, added to the Random Forest, raise detection of unseen attack families "
+        f"from {100 * unseen_caught:.1f}% to {100 * hybrid['Attacks detected']:.1f}% with "
+        f"{100 * hybrid['False positive rate']:.1f}% false alarms. On UNSW-NB15 an autoencoder "
+        f"trained on local normal traffic detects {100 * autoencoder['Attacks detected']:.1f}% "
+        "of attacks without a single attack label."
     )
-    st.write(
-        "Anomaly detectors trained only on normal traffic close much of that gap: combined "
-        "with the Random Forest they catch about 70% of the unseen attack families, and on "
-        "UNSW-NB15 an autoencoder trained on local normal traffic detects about 66% of "
-        "attacks without a single attack label (see \"Catching attacks it has never seen\")."
+
+    st.markdown("### What I would do in a real deployment")
+    st.markdown(
+        "- Train on traffic from the network the model will protect, not only on public datasets.\n"
+        "- Use a classifier for known attacks and an anomaly detector trained on local normal "
+        "traffic as a safety net for new ones.\n"
+        "- Evaluate on later traffic or on attack types left out of training instead of a "
+        "random split.\n"
+        "- Pick the alarm threshold from the cost of a missed attack versus the cost of "
+        "investigating a false alarm, then monitor drift and retrain regularly."
     )
-    st.markdown("### Reference")
-    st.write(
-        "Sampada Bhosale, Network Intrusion Detection Dataset. "
+
+    st.markdown("### Limitations")
+    st.markdown(
+        "- Kernel density Naive Bayes and the Gaussian SVM were trained on stratified "
+        "subsamples to keep the runtime reasonable.\n"
+        "- The dataset has no attack type labels, so attack families come from clustering "
+        "and are an approximation of real attack types.\n"
+        "- Only 8 features could be matched between NSL-KDD and UNSW-NB15 and some of them "
+        "are measured slightly differently in the two datasets.\n"
+        "- Choosing the best anomaly detector would need some labeled attacks for "
+        "validation, so no single detector is declared the winner."
+    )
+
+    st.markdown("### References")
+    st.markdown(
+        "- Sampada Bhosale, Network Intrusion Detection Dataset. "
         "[kaggle.com/datasets/sampadab17/network-intrusion-detection]"
-        "(https://www.kaggle.com/datasets/sampadab17/network-intrusion-detection)"
+        "(https://www.kaggle.com/datasets/sampadab17/network-intrusion-detection)\n"
+        "- Nour Moustafa and Jill Slay, UNSW-NB15: a comprehensive data set for network "
+        "intrusion detection systems, MilCIS 2015. "
+        "[research.unsw.edu.au/projects/unsw-nb15-dataset]"
+        "(https://research.unsw.edu.au/projects/unsw-nb15-dataset)"
     )
 
 

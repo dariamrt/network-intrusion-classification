@@ -45,7 +45,7 @@ The dataset has no attack type labels, so attack families are approximated by cl
 
 - **Every modern attack category is missed.** The NSL-KDD model detects under 1% of Exploits, Fuzzers, Generic, DoS, Reconnaissance, Backdoor and Worms traffic.
 - **The networks are completely different.** In adversarial validation, a classifier separates the two datasets' *normal* traffic with AUC 1.00, and almost any single numeric feature is enough.
-- **The feature mapping is not to blame.** Dropping the connection counters or rank-normalizing every feature within its own dataset still leaves NSL-KDD → UNSW-NB15 below zero MCC. Interestingly, with rank normalization a model trained on the broader, modern UNSW-NB15 attack set *does* transfer back to NSL-KDD (MCC 0.75).
+- **The feature mapping is not to blame.** Dropping the connection counters or rank-normalizing every feature within its own dataset still leaves the NSL-KDD to UNSW-NB15 transfer below zero MCC. Interestingly, with rank normalization a model trained on the broader, modern UNSW-NB15 attack set *does* transfer back to NSL-KDD (MCC 0.75).
 - **Local data beats public data.** 50 labeled UNSW-NB15 connections already lift MCC from -0.12 to 0.49. Adding the 25,000 NSL-KDD rows on top of local data changes MCC by at most about 0.015.
 
 **Conclusion:** a benchmark score measures how well a model knows one environment. Deploying an intrusion detector requires labeled data and evaluation from the target network, plus periodic retraining.
@@ -106,45 +106,28 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Run the classification pipeline from the command line:
-
-```bash
-python main.py
-```
-
-This regenerates `data_out/tables` and `data_out/plots`.
-
-Run the stress tests (about 15 seconds):
-
-```bash
-python robustness.py
-```
-
-This writes its tables to `data_out/robustness`.
-
-Run the cross-dataset experiments (downloads UNSW-NB15 on the first run, then about 30 seconds):
-
-```bash
-python cross_dataset.py
-```
-
-This writes its tables to `data_out/cross_dataset`.
-
-Run the anomaly detection experiments (about 20 seconds):
-
-```bash
-python anomaly_detection.py
-```
-
-This writes its tables to `data_out/anomaly_detection`.
-
 Launch the web interface:
 
 ```bash
 streamlit run app.py
 ```
 
-The first load trains all 11 models (about a minute) and caches the result in memory for every subsequent visitor, so later navigation is instant.
+The app loads precomputed results from `data_out`, so it starts in a few seconds without retraining anything.
+
+Rerun every analysis and refresh those results (downloads UNSW-NB15 on the first run, then about two minutes):
+
+```bash
+python main.py
+```
+
+Each analysis can also be run on its own:
+
+| Script | What it does | Output |
+|---|---|---|
+| `pipeline.py` | predictor scoring and the 11 classifiers | `data_out/tables`, `data_out/plots` |
+| `robustness.py` | stress tests of the headline result | `data_out/robustness` |
+| `cross_dataset.py` | NSL-KDD versus UNSW-NB15 | `data_out/cross_dataset` |
+| `anomaly_detection.py` | detectors trained only on normal traffic | `data_out/anomaly_detection` |
 
 ## Tech stack
 

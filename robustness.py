@@ -1,24 +1,3 @@
-"""Is 99.7% too good to be true?
-
-Stress tests for the headline result of the classification study. The main
-pipeline reports MCC 0.994 for Random Forest on a random 70/30 split; the
-checks below look for the usual reasons a number like that is inflated and
-measure how the model behaves outside the comfortable random-split setting:
-
-1. Duplicates and overlap between the training data and the evaluation data.
-2. Repeated cross-validation, so the score comes with a confidence interval
-   instead of a single split.
-3. Trivial baselines: how far does a depth 1, 2 or 3 decision tree get?
-4. Single-predictor power and a learning curve: how much signal is there,
-   and how little data is needed to find it?
-5. Ablation: how much does the model rely on its top predictors?
-6. Unseen attacks: anomalies are clustered into attack families, and each
-   family is held out of training entirely, which approximates detecting an
-   attack type the model has never seen.
-
-All encoders are fit on the training part of each split only. Results are
-written to data_out/robustness.
-"""
 from pathlib import Path
 
 import numpy as np
@@ -51,7 +30,6 @@ def load_data():
 
 
 def encode(x_train, x_test):
-    """Ordinal-encode the categorical columns, fitting on the training part only."""
     categorical = [c for c in CATEGORICAL if c in x_train.columns]
     x_train = x_train.copy()
     x_test = x_test.copy()
@@ -111,7 +89,6 @@ def cross_validation(df, predictors):
                                 df[predictors], df[TARGET], cv=cv, scoring=scoring)
         for metric in scoring:
             values = scores["test_" + metric]
-            # t-based 95% interval over the 15 folds (folds overlap, so this is optimistic)
             half_width = 2.145 * values.std(ddof=1) / np.sqrt(len(values))
             rows.append({"Model": name, "Metric": metric, "Mean": values.mean(),
                          "Std": values.std(ddof=1), "CI low": values.mean() - half_width,
@@ -158,7 +135,6 @@ def learning_curve(x_train, x_test, y_train, y_test):
 
 
 def ablation(rf, x_train, x_test, y_train, y_test):
-    # importance ranking comes from the forest trained on the training split only
     ranking = x_train.columns[np.argsort(-rf.feature_importances_)]
     rows = []
     for k in [0, 1, 3, 5, 10, 15, 20, 25, 30]:
@@ -170,7 +146,6 @@ def ablation(rf, x_train, x_test, y_train, y_test):
 
 
 def attack_families(df, predictors):
-    """Cluster the anomalies into pseudo attack families (the dataset has no attack type labels)."""
     anomalies = df[df[TARGET] == POSITIVE]
     numeric = [p for p in predictors if p not in CATEGORICAL]
     features = pd.concat([np.log1p(anomalies[numeric].clip(lower=0)),
@@ -187,7 +162,6 @@ def describe_family(rows):
 
 
 def unseen_attacks(df, predictors, families, index_test, test_prediction):
-    """Leave one attack family out of training and measure how much of it is still caught."""
     normal = df.index[df[TARGET] != POSITIVE]
     normal_train, normal_test = train_test_split(normal, test_size=0.3, random_state=0)
     seen = pd.Series(test_prediction, index=index_test)
@@ -222,7 +196,6 @@ def run_robustness(verbose=True):
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
     df, df_apply, predictors = load_data()
-    # same split as the main pipeline
     x_train, x_test, y_train, y_test, index_train, index_test = train_test_split(
         df[predictors], df[TARGET].values, df.index,
         test_size=0.3, random_state=0, stratify=df[TARGET].values
