@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from pipeline import run_pipeline
+from anomaly_detection import run_anomaly_detection
 from cross_dataset import UNSW_COLUMNS, run_cross_dataset
 from robustness import run_robustness
 
@@ -63,6 +64,11 @@ def get_robustness():
 @st.cache_data(show_spinner="Downloading UNSW-NB15 and running the cross-dataset tests (first run only)")
 def get_cross_dataset():
     return run_cross_dataset(verbose=False)
+
+
+@st.cache_data(show_spinner="Training the anomaly detectors (first run only, cached after that)")
+def get_anomaly_detection():
+    return run_anomaly_detection(verbose=False)
 
 
 def read_accuracy(model_name):
@@ -708,6 +714,188 @@ def render_cross_dataset():
     )
 
 
+DETECTOR_COLORS = {
+    "Isolation Forest": "#0D9488",
+    "Local Outlier Factor": "#9333EA",
+    "Autoencoder": "#2563EB",
+    "Random Forest with local attack labels": "#F97316",
+}
+
+
+def tradeoff_chart(roc, colors, max_fpr):
+    fig = go.Figure()
+    for method, color in colors.items():
+        part = roc[roc["Method"].str.startswith(method) & (roc["False positive rate"] <= max_fpr)]
+        fig.add_scatter(
+            x=100 * part["False positive rate"], y=100 * part["Attacks detected"], name=method,
+            mode="lines", line=dict(color=color, width=2),
+            hovertemplate=method + "<br>%{x:.1f}% false alarms<br>%{y:.1f}% attacks detected<extra></extra>",
+        )
+    fig.add_vline(x=100 * 0.01, line_dash="dash", line_color="#94A3B8",
+                  annotation_text="1% target", annotation_position="top right")
+    fig.update_layout(height=400, margin=dict(t=30, b=40, l=10, r=10), hovermode="closest",
+                      xaxis=dict(title="Normal connections flagged (%)", range=[0, 100 * max_fpr]),
+                      yaxis=dict(title="Attacks detected (%)", range=[0, 102]),
+                      legend=dict(orientation="h", y=1.1, x=0))
+    return fig
+
+
+def render_anomaly_detection():
+    st.title("Catching attacks it has never seen")
+    st.write(
+        "The two previous pages found the same weakness from two angles: a classifier "
+        "trained on labeled attacks only recognizes those attacks. This page turns the "
+        "question around. Anomaly detectors learn only what **normal** traffic looks like "
+        "and flag anything that deviates, so they need no attack labels at all."
+    )
+    st.markdown(
+        "- **Isolation Forest**: an unusual connection gets isolated by fewer random splits.\n"
+        "- **Local Outlier Factor**: an unusual connection sits in a sparser region than its neighbors.\n"
+        "- **Autoencoder**: a small neural network learns to compress and rebuild normal "
+        "connections; the ones it rebuilds badly are unusual."
+    )
+    st.write(
+        "Each detector's alarm threshold is set on held-out normal traffic so that about "
+        "1% of normal connections raise an alarm. **Any detector** raises an alarm when "
+        "at least one of the three does, with stricter individual thresholds so the "
+        "total stays near 1%."
+    )
+
+    r = get_anomaly_detection()
+    nsl = r["nsl_summary"].set_index("Method")
+    unsw = r["unsw_summary"].set_index("Method")
+    hybrid = "Random Forest + any detector"
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Unseen NSL-KDD attacks, Random Forest", f"{100 * nsl.loc['Random Forest', 'Attacks detected']:.1f}%")
+    c2.metric("With anomaly detection added", f"{100 * nsl.loc[hybrid, 'Attacks detected']:.1f}%",
+              f"{100 * nsl.loc[hybrid, 'False positive rate']:.1f}% false alarms", delta_color="off")
+    c3.metric("UNSW-NB15, NSL-KDD model", f"{100 * unsw.loc['Random Forest trained on NSL-KDD', 'Attacks detected']:.2f}%")
+    ae_local = unsw.loc["Autoencoder (local normal traffic)"]
+    c4.metric("UNSW-NB15, autoencoder, no labels", f"{100 * ae_local['Attacks detected']:.1f}%",
+              f"{100 * ae_local['False positive rate']:.1f}% false alarms", delta_color="off")
+
+    st.markdown("### 1. Attack families held out of training (NSL-KDD)")
+    st.write(
+        "The same six attack families as on the \"Is 99.7% too good to be true?\" page. "
+        "Each one was removed from the Random Forest's training data; the anomaly "
+        "detectors never see any attacks at all."
+    )
+    families = r["nsl_families"]
+    labels = [f"Family {f}<br>{p}" for f, p in
+              zip(families["Family"], families["Dominant pattern (protocol / service / flag)"])]
+    fig = go.Figure()
+    for column, color in [("Random Forest", "#94A3B8"), ("Any detector", "#2563EB"), (hybrid, "#F97316")]:
+        fig.add_bar(
+            x=labels, y=100 * families[column], name=column, marker_color=color,
+            text=[f"{100 * v:.0f}%" for v in families[column]], textposition="outside",
+            customdata=families["Connections"],
+            hovertemplate=column + "<br>%{x}<br>%{y:.1f}% detected<br>%{customdata:,} connections<extra></extra>",
+        )
+    fig.update_layout(barmode="group", bargap=0.25, bargroupgap=0.05, height=440,
+                      margin=dict(t=30, b=40, l=10, r=10),
+                      yaxis=dict(title="Attacks detected (%)", range=[0, 112]),
+                      legend=dict(orientation="h", y=1.1, x=0))
+    st.plotly_chart(fig, width="stretch")
+    st.dataframe(
+        r["nsl_summary"].style.format({
+            "Attacks detected": "{:.1%}", "Average over families": "{:.1%}",
+            "False positive rate": "{:.2%}", "AUC": "{:.3f}",
+        }, na_rep="-"),
+        hide_index=True, width="stretch",
+    )
+    st.write(
+        "Adding anomaly detection to the classifier raises detection of unseen attacks "
+        f"from {100 * nsl.loc['Random Forest', 'Attacks detected']:.1f}% to "
+        f"{100 * nsl.loc[hybrid, 'Attacks detected']:.1f}%, at the cost of "
+        f"{100 * nsl.loc[hybrid, 'False positive rate']:.1f}% false alarms instead of "
+        f"{100 * nsl.loc['Random Forest', 'False positive rate']:.1f}%. Most of the gain "
+        "comes from the large SYN flood family (family 1), which looks nothing like normal "
+        "traffic. The ICMP and HTTP families stay hidden: in these features they look like "
+        "ordinary traffic, so no detector that only knows normal behavior can single them out."
+    )
+    with st.expander("Each detector separately, per family"):
+        st.dataframe(
+            families.style.format({c: "{:.1%}" for c in families.columns[3:]}),
+            hide_index=True, width="stretch",
+        )
+        st.caption(
+            "The detectors catch different families: Isolation Forest and the autoencoder "
+            "find the floods, Local Outlier Factor finds part of the scans. Combining them "
+            "with stricter thresholds did not beat the best single detector."
+        )
+
+    st.markdown("### 2. A new network with no labeled attacks (UNSW-NB15)")
+    st.write(
+        "Collecting normal traffic from a network is easy; collecting labeled attacks is "
+        "not. So the detectors were trained only on UNSW-NB15's normal traffic, using all "
+        "of its own features, and compared with the NSL-KDD Random Forest and with a "
+        "Random Forest that has every local attack labeled (the best case, rarely available)."
+    )
+    summary = r["unsw_summary"]
+    colors = ["#94A3B8" if "NSL-KDD" in m else "#F97316" if "attack labels" in m else "#2563EB"
+              for m in summary["Method"]]
+    fig = go.Figure(go.Bar(
+        x=100 * summary["Attacks detected"], y=summary["Method"], orientation="h", marker_color=colors,
+        text=[f"{100 * d:.1f}% detected, {100 * f:.1f}% false alarms"
+              for d, f in zip(summary["Attacks detected"], summary["False positive rate"])],
+        textposition="outside",
+        hovertemplate="%{y}<br>%{x:.1f}% detected<extra></extra>",
+    ))
+    fig.update_layout(height=380, margin=dict(t=10, b=40, l=10, r=10),
+                      xaxis=dict(title="UNSW-NB15 attacks detected (%)", range=[0, 160]),
+                      yaxis=dict(autorange="reversed"))
+    st.plotly_chart(fig, width="stretch")
+    st.caption(
+        "Gray: trained on NSL-KDD. Blue: trained on local normal traffic only. "
+        "Orange: trained with labeled local attacks."
+    )
+    st.write(
+        "The autoencoder, given nothing but normal traffic from the new network, detects "
+        f"{100 * ae_local['Attacks detected']:.1f}% of attacks where the NSL-KDD model "
+        "detects almost none. Normal-only training still has to be local, though: the same "
+        "autoencoder trained on NSL-KDD's normal traffic flags "
+        f"{100 * unsw.loc['Autoencoder on NSL-KDD normal traffic', 'False positive rate']:.0f}% "
+        "of UNSW-NB15's normal traffic, which makes it useless."
+    )
+
+    st.markdown("**The trade-off between missed attacks and false alarms**")
+    st.write(
+        "A single threshold can be misleading: the labeled Random Forest above detects "
+        "more but also raises far more false alarms. Moving each method's threshold "
+        "gives the full picture."
+    )
+    st.plotly_chart(tradeoff_chart(r["unsw_roc"], DETECTOR_COLORS, max_fpr=0.2), width="stretch")
+    st.write(
+        "With labeled attacks, the Random Forest is still the best at any false alarm "
+        "rate. Among the label-free detectors the autoencoder clearly leads (AUC "
+        f"{ae_local['AUC']:.2f} versus {unsw.loc['Random Forest with local attack labels', 'AUC']:.2f} "
+        "with labels). Labels help, but the autoencoder gets most of the way without any."
+    )
+    categories = r["unsw_categories"]
+    with st.expander("Detection per UNSW-NB15 attack category"):
+        st.dataframe(
+            categories.style.format({c: "{:.0%}" for c in categories.columns[2:]})
+            .background_gradient(cmap="Blues", subset=list(categories.columns[2:]), vmin=0, vmax=1),
+            hide_index=True, width="stretch",
+        )
+
+    st.markdown("### Takeaways")
+    st.write(
+        "- Anomaly detection catches a large share of attacks that a classifier has never "
+        "seen, and it only needs normal traffic, which every network has plenty of.\n"
+        "- It is not a replacement: attacks that resemble normal traffic slip through, and "
+        "a classifier trained on labeled attacks is more precise for the attacks it knows.\n"
+        "- The practical design is both together: the classifier for known attacks, the "
+        "anomaly detector as a safety net for new ones, trained on the target network's "
+        "own traffic.\n"
+        "- No detector wins everywhere (Isolation Forest is best on NSL-KDD, the "
+        "autoencoder on UNSW-NB15), and picking one requires at least a few labeled "
+        "attacks to validate on. Choosing the winner from these test results would repeat "
+        "the mistake this project set out to expose."
+    )
+
+
 def render_conclusions(results):
     st.title("Conclusions")
     st.write(
@@ -739,6 +927,12 @@ def render_conclusions(results):
         "(see \"Is 99.7% too good to be true?\"). On a different network, UNSW-NB15, "
         "it detects almost none of the attacks (see \"Does it work on another network?\")."
     )
+    st.write(
+        "Anomaly detectors trained only on normal traffic close much of that gap: combined "
+        "with the Random Forest they catch about 70% of the unseen attack families, and on "
+        "UNSW-NB15 an autoencoder trained on local normal traffic detects about 66% of "
+        "attacks without a single attack label (see \"Catching attacks it has never seen\")."
+    )
     st.markdown("### Reference")
     st.write(
         "Sampada Bhosale, Network Intrusion Detection Dataset. "
@@ -754,7 +948,7 @@ def main():
         "Section",
         ["Overview", "Predictor analysis", "Model comparison", "Model details",
          "Is 99.7% too good to be true?", "Does it work on another network?",
-         "Live prediction", "Conclusions"],
+         "Catching attacks it has never seen", "Live prediction", "Conclusions"],
         label_visibility="collapsed",
     )
 
@@ -772,6 +966,8 @@ def main():
         render_stress_test()
     elif page == "Does it work on another network?":
         render_cross_dataset()
+    elif page == "Catching attacks it has never seen":
+        render_anomaly_detection()
     elif page == "Live prediction":
         render_prediction(results)
     elif page == "Conclusions":

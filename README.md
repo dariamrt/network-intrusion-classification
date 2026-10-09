@@ -52,6 +52,36 @@ The dataset has no attack type labels, so attack families are approximated by cl
 
 UNSW-NB15 is downloaded automatically (about 47 MB, checksum verified) on the first run into `data_in/unsw_nb15`. It is the official training/testing partition, by N. Moustafa and J. Slay.
 
+## Catching attacks it has never seen
+
+Both experiments above expose the same weakness: a classifier trained on labeled attacks only recognizes those attacks. `anomaly_detection.py` tests the standard remedy. Detectors that learn only what *normal* traffic looks like (Isolation Forest, Local Outlier Factor and an autoencoder) flag anything that deviates, so they need no attack labels. Thresholds are set on held-out normal traffic to flag about 1% of it.
+
+**NSL-KDD, attack families held out of training:**
+
+| Method | Needs attack labels | Unseen attacks detected | False alarms |
+|---|---|---|---|
+| Random Forest | yes | 9.8% | 0.1% |
+| Isolation Forest | no | 79.3% | 0.6% |
+| Autoencoder | no | 59.7% | 1.1% |
+| **Random Forest + anomaly detectors** | yes | **69.5%** | 0.7% |
+
+**UNSW-NB15, a new network with no labeled attacks:**
+
+| Method | Needs from the new network | Attacks detected | False alarms |
+|---|---|---|---|
+| Random Forest trained on NSL-KDD | nothing | 0.07% | 3.2% |
+| Autoencoder trained on NSL-KDD normal traffic | nothing | 27.2% | 68.6% |
+| **Autoencoder trained on local normal traffic** | normal traffic only | **65.7%** | 2.6% |
+| Random Forest with every local attack labeled | labeled attacks | 98.3% | 27.4% |
+
+- **Anomaly detection fills much of the gap.** It needs only normal traffic, which every network has plenty of.
+- **Labels still help.** At the same 3% false alarm rate, the labeled Random Forest catches 84% of attacks and the autoencoder 67% (AUC 0.97 vs 0.92).
+- **Normal-only training must be local too.** An autoencoder trained on NSL-KDD's normal traffic flags most of UNSW-NB15's normal traffic.
+- **Some attacks look normal.** The ICMP and HTTP attack families stay hidden from every detector.
+- **No detector wins everywhere.** Isolation Forest is best on NSL-KDD and the autoencoder on UNSW-NB15. Picking one requires a few labeled attacks to validate on, not the test results.
+
+**Conclusion:** the practical design combines both. A classifier handles known attacks, and an anomaly detector trained on the target network's own traffic acts as a safety net for new ones.
+
 ## Web interface
 
 `app.py` is a Streamlit application that trains the full pipeline once (cached in memory) and exposes it through 6 sections:
@@ -62,6 +92,7 @@ UNSW-NB15 is downloaded automatically (about 47 MB, checksum verified) on the fi
 - **Model details**: per-model confusion matrix, ROC curve, gain and lift charts, feature importance and a 2D projection of the test set.
 - **Is 99.7% too good to be true?**: the stress tests above, with charts for the shallow tree baselines, learning curve, predictor ablation and unseen attack families.
 - **Does it work on another network?**: the NSL-KDD to UNSW-NB15 transfer experiments, attack categories, adversarial validation and the local data curve.
+- **Catching attacks it has never seen**: anomaly detectors on the held-out attack families and on UNSW-NB15, including the trade-off between detected attacks and false alarms.
 - **Live prediction**: a form for the most influential predictors that runs a live prediction through the optimal model, with every other predictor filled in from its typical training value.
 - **Conclusions**: a summary of findings and limitations.
 
@@ -98,6 +129,14 @@ python cross_dataset.py
 ```
 
 This writes its tables to `data_out/cross_dataset`.
+
+Run the anomaly detection experiments (about 20 seconds):
+
+```bash
+python anomaly_detection.py
+```
+
+This writes its tables to `data_out/anomaly_detection`.
 
 Launch the web interface:
 
